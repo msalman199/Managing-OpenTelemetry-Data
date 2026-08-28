@@ -1,0 +1,53 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  filter/drop_health_checks:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.route"] == "/health"'
+        - 'attributes["http.route"] == "/ping"'
+
+  attributes/redact:
+    actions:
+      - key: user.password
+        action: delete
+      - key: user.email
+        action: delete
+      - key: environment
+        value: "lab"
+        action: upsert
+
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  file/filtered:
+    path: ./data/traces_filtered.json
+
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/drop_health_checks, attributes/redact, batch]
+      exporters: [file/filtered, debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888

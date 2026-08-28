@@ -1,0 +1,38 @@
+2026-08-28T00:50:15.280Z	info	service@v0.96.0/telemetry.go:55	Setting up own telemetry...
+2026-08-28T00:50:15.280Z	info	service@v0.96.0/telemetry.go:97	Serving metrics	{"address": "0.0.0.0:8888", "level": "Detailed"}
+2026-08-28T00:50:15.280Z	info	exporter@v0.96.0/exporter.go:275	Development component. May change in the future.	{"kind": "exporter", "data_type": "traces", "name": "debug"}
+2026-08-28T00:50:15.280Z	info	memorylimiter/memorylimiter.go:77	Memory limiter configured	{"kind": "processor", "name": "memory_limiter", "pipeline": "traces", "limit_mib": 512, "spike_limit_mib": 128, "check_interval": 5}
+2026-08-28T00:50:15.282Z	info	service@v0.96.0/service.go:143	Starting otelcol-contrib...	{"Version": "0.96.0", "NumCPU": 4}
+2026-08-28T00:50:15.282Z	info	extensions/extensions.go:34	Starting extensions...
+2026-08-28T00:50:15.282Z	warn	internal@v0.96.0/warning.go:42	Using the 0.0.0.0 address exposes this server to every network interface, which may facilitate Denial of Service attacks. Enable the feature gate to change the default and remove this warning.	{"kind": "receiver", "name": "otlp", "data_type": "traces", "documentation": "https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/security-best-practices.md#safeguards-against-denial-of-service-attacks", "feature gate ID": "component.UseLocalHostAsDefaultHost"}
+2026-08-28T00:50:15.282Z	info	otlpreceiver@v0.96.0/otlp.go:152	Starting HTTP server	{"kind": "receiver", "name": "otlp", "data_type": "traces", "endpoint": "0.0.0.0:4318"}
+2026-08-28T00:50:15.282Z	info	service@v0.96.0/service.go:169	Everything is ready. Begin running and processing data.
+2026-08-28T00:50:15.282Z	warn	localhostgate/featuregate.go:63	The default endpoints for all servers in components will change to use localhost instead of 0.0.0.0 in a future version. Use the feature gate to preview the new default.	{"feature gate ID": "component.UseLocalHostAsDefaultHost"}
+2026-08-28T00:50:19.282Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 26, "spans": 26}
+2026-08-28T00:50:20.288Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 21, "spans": 21}
+2026-08-28T00:50:21.292Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 24, "spans": 24}
+2026-08-28T00:50:22.296Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 29, "spans": 29}
+2026-08-28T00:50:23.300Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 15, "spans": 15}
+2026-08-28T00:50:24.303Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 20, "spans": 20}
+2026-08-28T00:50:25.307Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 24, "spans": 24}
+2026-08-28T00:50:26.311Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 22, "spans": 22}
+2026-08-28T00:50:27.315Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 22, "spans": 22}
+2026-08-28T00:50:28.321Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 19, "spans": 19}
+2026-08-28T00:50:29.324Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 25, "spans": 25}
+2026-08-28T00:50:30.327Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 20, "spans": 20}
+2026-08-28T00:50:31.331Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 21, "spans": 21}
+2026-08-28T00:50:32.334Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 20, "spans": 20}
+2026-08-28T00:50:33.338Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 20, "spans": 20}
+2026-08-28T00:50:34.342Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 26, "spans": 26}
+2026-08-28T00:50:35.345Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 20, "spans": 20}
+2026-08-28T00:50:36.349Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 22, "spans": 22}
+2026-08-28T00:50:37.352Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 19, "spans": 19}
+2026-08-28T00:50:38.355Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 17, "spans": 17}
+2026-08-28T00:50:39.358Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 26, "spans": 26}
+2026-08-28T00:50:40.360Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 20, "spans": 20}
+2026-08-28T00:50:41.364Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 25, "spans": 25}
+2026-08-28T00:50:42.367Z	info	TracesExporter	{"kind": "exporter", "data_type": "traces", "name": "debug", "resource spans": 5, "spans": 5}
+2026-08-28T00:50:55.015Z	info	otelcol@v0.96.0/collector.go:272	Received signal from OS	{"signal": "terminated"}
+2026-08-28T00:50:55.015Z	info	service@v0.96.0/service.go:206	Starting shutdown...
+2026-08-28T00:50:55.017Z	info	extensions/extensions.go:59	Stopping extensions...
+2026-08-28T00:50:55.017Z	info	service@v0.96.0/service.go:220	Shutdown complete.
