@@ -1,0 +1,444 @@
+Managing OpenTelemetry Data - Sampling, Filtering, and Retention
+Objectives
+By the end of this lab, you will be able to:
+
+Install and run the OpenTelemetry Collector on a Linux system
+Implement probabilistic sampling to reduce trace volume
+Configure filter and attribute processors to remove sensitive or irrelevant telemetry data
+Set up file-based retention policies with rotation for exported telemetry
+Monitor collector resource usage and validate that a telemetry pipeline works end to end
+Prerequisites
+Before starting this lab, you should have:
+
+Basic understanding of Linux command line operations
+Familiarity with YAML configuration files
+Basic knowledge of observability concepts (metrics, traces, logs)
+A Linux machine (or VM/container) with sudo access and internet connectivity
+Install the required tools before starting:
+
+sudo apt update
+sudo apt install -y curl wget tar python3 python3-pip
+pip3 install requests
+This lab uses the OpenTelemetry Collector Contrib distribution (which includes the tail-sampling and filter processors) run as a standalone binary. No Docker or root-level services are required.
+
+Lab Environment Setup
+Create a working directory and download the collector binary. This lab targets Linux amd64; if you are on a different architecture, replace linux_amd64 with your platform (for example linux_arm64) in the download URL below.
+
+mkdir -p ~/otel-lab/config ~/otel-lab/data ~/otel-lab/scripts ~/otel-lab/logs
+cd ~/otel-lab
+
+OTEL_VERSION="0.96.0"
+ARCH="linux_amd64"
+
+wget -q "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTEL_VERSION}/otelcol-contrib_${OTEL_VERSION}_${ARCH}.tar.gz" -O otelcol-contrib.tar.gz
+
+tar -xzf otelcol-contrib.tar.gz
+
+chmod +x otelcol-contrib
+
+./otelcol-contrib --version
+Deliverable: the version command prints something like otelcol-contrib version 0.96.0. If the download fails, check the release page at https://github.com/open-telemetry/opentelemetry-collector-releases/releases for the latest available version and substitute it into OTEL_VERSION.
+
+Task 1: Configure Probabilistic Sampling
+Step 1.1: Create a Sampling Configuration
+Create a collector configuration that receives OTLP data over HTTP, applies probabilistic sampling to traces, and writes the sampled output to a file.
+
+cat > config/sampling-config.yaml << 'EOF'
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  probabilistic_sampler:
+    sampling_percentage: 20.0
+
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  file/traces:
+    path: ./data/traces_sampled.json
+
+  debug:
+    verbosity: normal
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, probabilistic_sampler, batch]
+      exporters: [file/traces, debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+EOF
+Step 1.2: Start the Collector and Generate Test Traces
+Start the collector in the background, then generate a batch of synthetic traces with a small Python script.
+
+cd ~/otel-lab
+./otelcol-contrib --config=config/sampling-config.yaml > logs/collector.log 2>&1 &
+echo $! > collector.pid
+sleep 3
+ps -p "$(cat collector.pid)" -o pid,cmd
+Deliverable: the ps output shows the running otelcol-contrib process. If it is not running, check logs/collector.log for a startup error such as a port already in use.
+
+Now create the trace generator. This script sends OTLP/HTTP JSON trace payloads directly to the collector's /v1/traces endpoint:
+
+cat > scripts/send_traces.py << 'EOF'
+#!/usr/bin/env python3
+
+import time
+import random
+import requests
+
+COLLECTOR_URL = "http://localhost:4318/v1/traces"
+
+
+def build_trace(index):
+    trace_id = f"{random.getrandbits(128):032x}"
+    span_id = f"{random.getrandbits(64):016x}"
+    start_ns = int(time.time() * 1e9)
+    end_ns = start_ns + random.randint(1_000_000, 50_000_000)
+
+    return {
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "checkout-service"}}
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {
+                                "traceId": trace_id,
+                                "spanId": span_id,
+                                "name": f"handle-request-{index}",
+                                "kind": 2,
+                                "startTimeUnixNano": str(start_ns),
+                                "endTimeUnixNano": str(end_ns),
+                                "attributes": [
+                                    {"key": "http.route", "value": {"stringValue": "/api/checkout"}},
+                                    {"key": "http.status_code", "value": {"intValue": 200}}
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def main():
+    sent = 0
+    for i in range(200):
+        payload = build_trace(i)
+        try:
+            resp = requests.post(COLLECTOR_URL, json=payload, timeout=5)
+            if resp.status_code == 200:
+                sent += 1
+        except requests.exceptions.RequestException as exc:
+            print(f"request {i} failed: {exc}")
+        time.sleep(0.02)
+    print(f"Sent {sent} of 200 trace requests successfully")
+
+
+if __name__ == "__main__":
+    main()
+EOF
+
+python3 scripts/send_traces.py
+Deliverable: the script prints Sent 200 of 200 trace requests successfully. Now confirm that sampling reduced the volume of exported spans:
+
+wc -l data/traces_sampled.json
+Expected result: the file contains substantially fewer than 200 lines/spans (roughly 20 percent of what was sent, since sampling_percentage is set to 20.0), demonstrating that probabilistic sampling is discarding the majority of traces before export.
+
+Stop the collector before moving to the next task:
+
+kill "$(cat collector.pid)" 2>/dev/null
+sleep 1
+Task 2: Filter and Redact Sensitive Telemetry
+Step 2.1: Create a Filtering Configuration
+Build a second configuration that drops health-check spans and redacts a sensitive attribute using the filter and attributes processors.
+
+cat > config/filter-config.yaml << 'EOF'
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  filter/drop_health_checks:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.route"] == "/health"'
+        - 'attributes["http.route"] == "/ping"'
+
+  attributes/redact:
+    actions:
+      - key: user.password
+        action: delete
+      - key: user.email
+        action: delete
+      - key: environment
+        value: "lab"
+        action: upsert
+
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  file/filtered:
+    path: ./data/traces_filtered.json
+
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/drop_health_checks, attributes/redact, batch]
+      exporters: [file/filtered, debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+EOF
+Step 2.2: Generate Mixed Traffic and Verify Filtering
+Extend the trace generator to send a mix of real requests, health checks, and requests carrying sensitive attributes:
+
+cat > scripts/send_mixed_traces.py << 'EOF'
+#!/usr/bin/env python3
+
+import time
+import random
+import requests
+
+COLLECTOR_URL = "http://localhost:4318/v1/traces"
+ROUTES = ["/api/users", "/api/orders", "/health", "/ping", "/api/products"]
+
+
+def build_trace(index, route):
+    trace_id = f"{random.getrandbits(128):032x}"
+    span_id = f"{random.getrandbits(64):016x}"
+    start_ns = int(time.time() * 1e9)
+    end_ns = start_ns + random.randint(1_000_000, 20_000_000)
+
+    return {
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "web-service"}}
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {
+                                "traceId": trace_id,
+                                "spanId": span_id,
+                                "name": f"HTTP {route}",
+                                "kind": 2,
+                                "startTimeUnixNano": str(start_ns),
+                                "endTimeUnixNano": str(end_ns),
+                                "attributes": [
+                                    {"key": "http.route", "value": {"stringValue": route}},
+                                    {"key": "http.status_code", "value": {"intValue": 200}},
+                                    {"key": "user.password", "value": {"stringValue": "sensitive123"}},
+                                    {"key": "user.email", "value": {"stringValue": "user@example.com"}}
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def main():
+    counts = {route: 0 for route in ROUTES}
+    for i in range(150):
+        route = random.choice(ROUTES)
+        counts[route] += 1
+        payload = build_trace(i, route)
+        try:
+            requests.post(COLLECTOR_URL, json=payload, timeout=5)
+        except requests.exceptions.RequestException as exc:
+            print(f"request {i} failed: {exc}")
+        time.sleep(0.02)
+    print("Traces sent per route:", counts)
+
+
+if __name__ == "__main__":
+    main()
+EOF
+
+./otelcol-contrib --config=config/filter-config.yaml > logs/collector.log 2>&1 &
+echo $! > collector.pid
+sleep 3
+
+python3 scripts/send_mixed_traces.py
+sleep 2
+Deliverable: the script prints a dictionary of counts per route, for example Traces sent per route: {'/api/users': 32, '/api/orders': 28, '/health': 30, '/ping': 29, '/api/products': 31}.
+
+Now verify that health-check spans were dropped and sensitive fields were removed:
+
+grep -c "HTTP /health" data/traces_filtered.json || echo "0 matches for /health"
+grep -c "HTTP /ping" data/traces_filtered.json || echo "0 matches for /ping"
+grep -c "user.password" data/traces_filtered.json || echo "0 matches for user.password"
+grep -c "HTTP /api/users" data/traces_filtered.json
+Expected result: the /health, /ping, and user.password searches return 0 matches, while the /api/users search returns a nonzero count. This confirms the filter processor dropped health-check spans and the attributes processor redacted sensitive fields, while legitimate traffic passed through.
+
+Stop the collector before moving to the final task:
+
+kill "$(cat collector.pid)" 2>/dev/null
+sleep 1
+Task 3: Configure Retention and Monitor Performance
+Step 3.1: Add File Rotation for Retention
+Create a configuration that combines sampling with file rotation, so exported data does not grow without bound. The file exporter's rotation settings cap file size and the number of retained backups.
+
+cat > config/retention-config.yaml << 'EOF'
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  probabilistic_sampler:
+    sampling_percentage: 50.0
+
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  file/retained:
+    path: ./data/traces_retained.json
+    rotation:
+      max_megabytes: 1
+      max_backups: 3
+      max_days: 7
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, probabilistic_sampler, batch]
+      exporters: [file/retained, debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888
+EOF
+Step 3.2: Create a Performance Monitoring Script
+cat > scripts/monitor_performance.sh << 'EOF'
+#!/bin/bash
+set -e
+
+PID_FILE="collector.pid"
+METRICS_URL="http://localhost:8888/metrics"
+
+if [ ! -f "$PID_FILE" ]; then
+    echo "Collector PID file not found. Is the collector running?"
+    exit 1
+fi
+
+PID=$(cat "$PID_FILE")
+
+if ! ps -p "$PID" > /dev/null 2>&1; then
+    echo "Collector process (PID $PID) is not running."
+    exit 1
+fi
+
+echo "=== Collector Process Info (PID: $PID) ==="
+ps -p "$PID" -o pid,ppid,cmd,%mem,%cpu,etime
+
+echo
+echo "=== Data Directory Usage ==="
+du -sh ./data/*.json 2>/dev/null || echo "No data files found"
+
+echo
+echo "=== Collector Metrics Sample (accepted/exported spans) ==="
+if curl -s "$METRICS_URL" > /dev/null 2>&1; then
+    curl -s "$METRICS_URL" | grep -E "otelcol_receiver_accepted_spans|otelcol_exporter_sent_spans" || \
+        echo "No span metrics found yet; send more traffic and retry"
+else
+    echo "Metrics endpoint not reachable at $METRICS_URL"
+fi
+EOF
+
+chmod +x scripts/monitor_performance.sh
+Step 3.3: Run the Pipeline and Validate Retention and Metrics
+cd ~/otel-lab
+./otelcol-contrib --config=config/retention-config.yaml > logs/collector.log 2>&1 &
+echo $! > collector.pid
+sleep 3
+
+for i in 1 2 3 4 5; do
+    python3 scripts/send_traces.py
+done
+
+./scripts/monitor_performance.sh
+Deliverable: the monitoring script prints the collector's CPU/memory usage, the size of files under data/, and metric lines such as otelcol_receiver_accepted_spans_total{...} 1000 and otelcol_exporter_sent_spans_total{...} with a smaller value (reflecting the 50 percent sampling rate). List the data directory to confirm rotation behavior:
+
+ls -la data/
+Expected result: you see traces_retained.json and, if the 1 MB size threshold was reached during the test, one or more rotated backup files (named with a timestamp suffix). If no rotation occurred, this simply means the total exported volume stayed under 1 MB, which is expected with only 1000 sampled trace requests; the rotation settings themselves are still validated as correctly configured because the collector started without error.
+
+Step 3.4: Clean Up
+kill "$(cat collector.pid)" 2>/dev/null
+sleep 1
+rm -f collector.pid
+echo "Collector stopped. Lab artifacts remain in ~/otel-lab/data and ~/otel-lab/logs for review."
+Expected Outcomes
+A running OpenTelemetry Collector configured with probabilistic sampling that measurably reduces exported trace volume
+A filtering pipeline that removes health-check noise and redacts sensitive attributes before data leaves the collector
+A retention-aware export configuration using file rotation, validated with a performance monitoring script that reports process resource usage and collector metrics
+Troubleshooting
+Collector exits immediately after starting: check logs/collector.log for a YAML parse error or a port conflict (another process already bound to 4317/4318/8888); confirm with ss -tlnp | grep 4318.
+send_traces.py reports failed requests: verify the collector is running and listening on the HTTP port with ps -p "$(cat collector.pid)" and curl -s http://localhost:4318/v1/traces (an empty POST should return a 400, not a connection error); a connection error means the collector is not up yet or crashed on startup.
+Conclusion
+In this lab, you installed the OpenTelemetry Collector Contrib distribution and built three progressively refined pipelines: one applying probabilistic sampling to control trace volume, one using filter and attribute processors to drop noisy health-check spans and redact sensitive user data, and one combining sampling with file-based retention and rotation while being monitored for resource usage. You validated each stage with concrete checks, counting exported spans, grepping for redacted fields, and inspecting collector metrics and rotated files, rather than assuming the configuration worked. You now have direct, hands-on experience configuring and verifying the core data management controls, sampling, filtering, and retention, that are essential for operating an OpenTelemetry pipeline safely and efficiently at scale.
